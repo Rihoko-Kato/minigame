@@ -425,10 +425,16 @@
 (function(){
 
   /* =========================================================
-     DBレイヤー（今はlocalStorageで擬似実装／後でFirebase等に差し替え想定）
-     ここから下の関数だけを書き換えれば、実際のバックエンドに接続できる設計。
+     DBレイヤー（Googleスプレッドシート連携／未設定時はlocalStorageにフォールバック）
+     ここから下の関数だけを書き換えれば、他のバックエンドにも差し替え可能。
      ========================================================= */
-  const DB_KEY_COMMENTS = 'moyamoyaArcade_comments_v1';
+
+  // ↓↓↓ ここにApps Scriptの「ウェブアプリURL」を貼り付けると、
+  //     コメントがスプレッドシート経由でみんなに共有されるようになります。
+  //     空のままだと、この端末のlocalStorageだけに保存される今まで通りの動作です。
+  const SHEET_API_URL = ''; // 例: 'https://script.google.com/macros/s/xxxxx/exec'
+
+  const DB_KEY_COMMENTS = 'moyamoyaArcade_comments_v1'; // SHEET_API_URL未設定時のフォールバック用キー
 
   // コメントを1件保存する
   // data: { gameId, userUuid, userName, userAvatar, text }
@@ -441,7 +447,22 @@
       text: data.text,
       createdAt: new Date().toISOString()
     };
-    // ↓↓↓ 将来的にはここを Firebase/Supabase への insert 呼び出しに置き換える
+
+    if(SHEET_API_URL){
+      try{
+        // Content-Type を text/plain にすることで、Apps Script側のCORSプリフライトを回避
+        await fetch(SHEET_API_URL, {
+          method:'POST',
+          headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+          body: JSON.stringify(comment)
+        });
+        return comment;
+      }catch(err){
+        console.error('スプレッドシートへの保存に失敗しました。localStorageに退避します。', err);
+      }
+    }
+
+    // フォールバック（SHEET_API_URL未設定、または通信失敗時）
     const all = JSON.parse(localStorage.getItem(DB_KEY_COMMENTS) || '[]');
     all.push(comment);
     localStorage.setItem(DB_KEY_COMMENTS, JSON.stringify(all));
@@ -450,7 +471,17 @@
 
   // 指定ゲームのコメント一覧を取得する（新しい順）
   async function loadComments(gameId){
-    // ↓↓↓ 将来的にはここを Firebase/Supabase への query 呼び出しに置き換える
+    if(SHEET_API_URL){
+      try{
+        const res = await fetch(`${SHEET_API_URL}?gameId=${encodeURIComponent(gameId)}`);
+        const rows = await res.json();
+        return rows.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+      }catch(err){
+        console.error('スプレッドシートの読み込みに失敗しました。localStorageを表示します。', err);
+      }
+    }
+
+    // フォールバック（SHEET_API_URL未設定、または通信失敗時）
     const all = JSON.parse(localStorage.getItem(DB_KEY_COMMENTS) || '[]');
     return all
       .filter(c => c.gameId === gameId)
