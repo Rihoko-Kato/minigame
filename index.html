@@ -200,6 +200,41 @@
   #screenOverlay .big{ font-size:15px; font-weight:800; color:var(--text-main); }
   #screenOverlay .small{ font-size:11px; }
 
+  /* ===================== 記録一覧 ===================== */
+  #resultsSection{ margin-top:24px; }
+  #resultsSection h4{
+    font-size:14px; font-weight:900; margin:0 0 12px;
+    display:flex; align-items:center; gap:6px;
+    color:var(--neon-yellow);
+  }
+  #resultList{ display:flex; flex-direction:column; gap:10px; }
+  .resultEmpty{
+    font-size:12.5px; color:var(--text-sub);
+    background:var(--panel); border-radius:14px; padding:14px; text-align:center;
+  }
+  .resultCard{
+    background:linear-gradient(135deg, rgba(255,242,79,.08), rgba(255,255,255,.02));
+    border:1.5px solid rgba(255,242,79,.25);
+    border-radius:14px;
+    padding:12px 14px;
+    display:flex; gap:10px;
+    align-items:center;
+  }
+  .resultCard .rAvatar{
+    width:34px; height:34px; border-radius:50%;
+    background:var(--panel-light);
+    display:flex; align-items:center; justify-content:center;
+    font-size:17px; flex-shrink:0;
+  }
+  .resultCard .rBody{ flex:1; min-width:0; }
+  .resultCard .rHead{
+    display:flex; justify-content:space-between; gap:8px;
+    font-size:11.5px; color:var(--text-sub); margin-bottom:4px;
+    flex-wrap:wrap;
+  }
+  .resultCard .rName{ font-weight:800; color:var(--text-main); }
+  .resultCard .rSummary{ font-size:13.5px; font-weight:700; color:var(--neon-yellow); }
+
   /* ===================== コメント ===================== */
   #commentsSection{ margin-top:24px; }
   #commentsSection h4{
@@ -231,7 +266,7 @@
     flex-wrap:wrap;
   }
   .commentCard .cName{ font-weight:800; color:var(--text-main); }
-  .commentCard .cName .cTag{
+  .cTag{
     font-weight:600; color:var(--text-sub); font-size:10.5px;
     font-family:monospace; letter-spacing:.5px;
   }
@@ -393,6 +428,11 @@
     </div>
   </div>
 
+  <div id="resultsSection">
+    <h4>🏆 みんなの記録</h4>
+    <div id="resultList"></div>
+  </div>
+
   <div id="commentsSection">
     <h4>💬 コメント一覧</h4>
     <div id="commentList"></div>
@@ -432,7 +472,7 @@
   // ↓↓↓ ここにApps Scriptの「ウェブアプリURL」を貼り付けると、
   //     コメントがスプレッドシート経由でみんなに共有されるようになります。
   //     空のままだと、この端末のlocalStorageだけに保存される今まで通りの動作です。
-  const SHEET_API_URL = 'https://script.google.com/macros/s/AKfycbyP_oLvK0KwHhv-fQlY1OTCsYTiLgEkRc9T_FP94SsXupaWC6yJ0fwIOZS349-iYrTnPg/exec'; // 例: 'https://script.google.com/macros/s/xxxxx/exec'
+  const SHEET_API_URL = ''; // 例: 'https://script.google.com/macros/s/xxxxx/exec'
 
   const DB_KEY_COMMENTS = 'moyamoyaArcade_comments_v1'; // SHEET_API_URL未設定時のフォールバック用キー
 
@@ -454,7 +494,7 @@
         await fetch(SHEET_API_URL, {
           method:'POST',
           headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-          body: JSON.stringify(comment)
+          body: JSON.stringify({ kind:'comment', ...comment })
         });
         return comment;
       }catch(err){
@@ -473,7 +513,7 @@
   async function loadComments(gameId){
     if(SHEET_API_URL){
       try{
-        const res = await fetch(`${SHEET_API_URL}?gameId=${encodeURIComponent(gameId)}`);
+        const res = await fetch(`${SHEET_API_URL}?gameId=${encodeURIComponent(gameId)}&kind=comment`);
         const rows = await res.json();
         return rows.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
       }catch(err){
@@ -485,6 +525,59 @@
     const all = JSON.parse(localStorage.getItem(DB_KEY_COMMENTS) || '[]');
     return all
       .filter(c => c.gameId === gameId)
+      .sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }
+
+  /* ---- ここから「ゲームの記録（スコア・達成度）」用 ---- */
+  const DB_KEY_RESULTS = 'moyamoyaArcade_results_v1'; // SHEET_API_URL未設定時のフォールバック用キー
+
+  // ゲームの記録を1件保存する
+  // data: { gameId, userUuid, userName, userAvatar, summary, detail }
+  async function saveResult(data){
+    const result = {
+      gameId: data.gameId,
+      userUuid: data.userUuid,
+      userName: data.userName,
+      userAvatar: data.userAvatar,
+      summary: data.summary,   // 例:「85秒生存 / ジャンプ12回」のような短い一言
+      detail: data.detail || {}, // 例:{ time:85, jumps:12 } のような生データ
+      createdAt: new Date().toISOString()
+    };
+
+    if(SHEET_API_URL){
+      try{
+        await fetch(SHEET_API_URL, {
+          method:'POST',
+          headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+          body: JSON.stringify({ kind:'result', ...result })
+        });
+        return result;
+      }catch(err){
+        console.error('スプレッドシートへの記録保存に失敗しました。localStorageに退避します。', err);
+      }
+    }
+
+    const all = JSON.parse(localStorage.getItem(DB_KEY_RESULTS) || '[]');
+    all.push(result);
+    localStorage.setItem(DB_KEY_RESULTS, JSON.stringify(all));
+    return result;
+  }
+
+  // 指定ゲームの記録一覧を取得する（新しい順）
+  async function loadResults(gameId){
+    if(SHEET_API_URL){
+      try{
+        const res = await fetch(`${SHEET_API_URL}?gameId=${encodeURIComponent(gameId)}&kind=result`);
+        const rows = await res.json();
+        return rows.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+      }catch(err){
+        console.error('スプレッドシートの記録読み込みに失敗しました。localStorageを表示します。', err);
+      }
+    }
+
+    const all = JSON.parse(localStorage.getItem(DB_KEY_RESULTS) || '[]');
+    return all
+      .filter(r => r.gameId === gameId)
       .sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 
@@ -556,26 +649,30 @@
   /* =========================================================
      ゲーム一覧
      ========================================================= */
+  /* ↓↓↓ ここ！各ゲームの url: '' の '' の中に、GitHub PagesのURLを貼り付けてください。
+     例）url: 'https://ユーザー名.github.io/moyamoya-arcade/fact_or_emotion_game.html'
+     空のままなら「プレビュー準備中」の画面のままになります。 */
   const games = [
-    { id:'fact-emotion',     emoji:'🗂️', color:'cyan',   title:'事実と感情の仕分け',
+    { id:'fact-emotion',     emoji:'🗂️', color:'cyan',   title:'事実と感情の仕分け', url:'',
       desc:'日々の振り返りを「事実」と「感情」に仕分けて客観視するカードゲーム。' },
-    { id:'clay-rabbit',      emoji:'🐰', color:'yellow', title:'粘土工作クリッカー（うさぎ）',
+    { id:'clay-rabbit',      emoji:'🐰', color:'yellow', title:'粘土工作クリッカー（うさぎ）', url:'',
       desc:'制限時間内にひたすら連打！完成度より「熱量」だけを評価するクリッカー。' },
-    { id:'jikoken-defense',  emoji:'😴', color:'pink',   title:'自己嫌悪ディフェンス',
+    { id:'jikoken-defense',  emoji:'😴', color:'pink',   title:'自己嫌悪ディフェンス', url:'',
       desc:'夜な夜な襲ってくる自己嫌悪モンスターを、寝るボタン連打で吹き飛ばせ。' },
-    { id:'moyamoya-delivery',emoji:'📦', color:'green',  title:'モヤモヤ納品',
+    { id:'moyamoya-delivery',emoji:'📦', color:'green',  title:'モヤモヤ納品', url:'',
       desc:'モヤモヤを箱に詰めてリボンをかけ、出荷して区切りをつけるドラッグ&ドロップゲーム。' },
-    { id:'fact-run',         emoji:'🏃', color:'cyan',   title:'絶対勝てないラン「FACT」',
+    { id:'fact-run',         emoji:'🏃', color:'cyan',   title:'絶対勝てないラン「FACT」', url:'',
       desc:'絶対に避けられない壁にぶつかって終わる、でも行動の事実だけを称えるランゲーム。' },
-    { id:'nod-bot',          emoji:'🤖', color:'pink',   title:'全肯定うなずきチャット',
+    { id:'nod-bot',          emoji:'🤖', color:'pink',   title:'全肯定うなずきチャット', url:'',
       desc:'何を言っても評価せず、ただ大げさにうなずいて受け止めてくれるロボット。' },
-    { id:'good-extractor',   emoji:'🎰', color:'yellow', title:'いいこと抽出マシーン',
+    { id:'good-extractor',   emoji:'🎰', color:'yellow', title:'いいこと抽出マシーン', url:'',
       desc:'やらかしを投入すると、強引にポジティブな一言を抽出してくれるガチャ風マシーン。' },
-    { id:'oracle-bot',       emoji:'🔮', color:'green',  title:'適当お告げボット',
+    { id:'oracle-bot',       emoji:'🔮', color:'green',  title:'適当お告げボット', url:'',
       desc:'水晶玉に相談すると、スケールの大きすぎる適当な理由で「大丈夫」と言ってくれる。' },
-    { id:'positive-buddy',   emoji:'😎', color:'cyan',   title:'ぶっとびポジティブ相棒',
+    { id:'positive-buddy',   emoji:'😎', color:'cyan',   title:'ぶっとびポジティブ相棒', url:'',
       desc:'サングラス犬が、宇宙規模のヤバい事実で悩みを笑い飛ばしてくれる相棒ボット。' }
   ];
+
 
   /* =========================================================
      DOM参照
@@ -591,6 +688,7 @@
   const gameFrame = document.getElementById('gameFrame');
 
   const commentList = document.getElementById('commentList');
+  const resultList = document.getElementById('resultList');
   const commentInput = document.getElementById('commentInput');
   const commentSubmit = document.getElementById('commentSubmit');
   const formAvatar = document.getElementById('formAvatar');
@@ -643,10 +741,18 @@
     playTitle.textContent = game.title;
     playDesc.textContent = game.desc;
 
-    // 実際のゲームを組み込む際は、ここで gameFrame.src を本物のURLに差し替える
-    gameFrame.src = 'about:blank';
+    // games配列でurlを設定したゲームは実際に読み込み、未設定なら「準備中」表示のまま
+    const screenOverlay = document.getElementById('screenOverlay');
+    if(game.url){
+      gameFrame.src = game.url;
+      screenOverlay.style.display = 'none';
+    } else {
+      gameFrame.src = 'about:blank';
+      screenOverlay.style.display = 'flex';
+    }
 
     renderComments(game.id);
+    renderResults(game.id);
   }
 
   function backToGallery(){
@@ -665,6 +771,58 @@
     const pad = n => String(n).padStart(2,'0');
     return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
+
+  async function renderResults(gameId){
+    resultList.innerHTML = '<div class="resultEmpty">読み込み中…</div>';
+    const results = await loadResults(gameId);
+    resultList.innerHTML = '';
+
+    if(results.length === 0){
+      resultList.innerHTML = '<div class="resultEmpty">まだ記録はありません。遊んでみると、ここに結果が並びます。</div>';
+      return;
+    }
+
+    results.forEach(r => {
+      const el = document.createElement('div');
+      el.className = 'resultCard';
+      el.innerHTML = `
+        <div class="rAvatar">${r.userAvatar || '🙂'}</div>
+        <div class="rBody">
+          <div class="rHead">
+            <span class="rName">${escapeHtml(r.userName || 'ゲスト')} <span class="cTag">${shortTag(r.userUuid)}</span></span>
+            <span>${formatDate(r.createdAt)}</span>
+          </div>
+          <div class="rSummary">${escapeHtml(r.summary || '')}</div>
+        </div>
+      `;
+      resultList.appendChild(el);
+    });
+  }
+
+  // 埋め込んだゲーム（iframe）からの postMessage を受け取り、記録として保存する
+  // ゲーム側からは以下の形で送ってもらう想定:
+  //   window.parent.postMessage({
+  //     type: 'moyamoyaGameResult',
+  //     gameId: '<このゲームのid>',
+  //     summary: '85秒生存 / ジャンプ12回',   // 一覧に表示される短い一言
+  //     detail: { time: 85, jumps: 12 }        // 生データ（任意）
+  //   }, '*');
+  window.addEventListener('message', async (event) => {
+    const msg = event.data;
+    if(!msg || msg.type !== 'moyamoyaGameResult') return;
+    if(!currentUser || !currentGame) return;
+    if(msg.gameId !== currentGame.id) return; // 表示中のゲーム以外からの結果は無視
+
+    await saveResult({
+      gameId: msg.gameId,
+      userUuid: currentUser.uuid,
+      userName: currentUser.name || 'ゲスト',
+      userAvatar: currentUser.avatar,
+      summary: msg.summary || '',
+      detail: msg.detail || {}
+    });
+    await renderResults(msg.gameId);
+  });
 
   async function renderComments(gameId){
     commentList.innerHTML = '<div class="commentEmpty">読み込み中…</div>';
